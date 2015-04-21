@@ -1,0 +1,128 @@
+apply plugin: 'groovy'
+apply plugin: 'maven'
+apply plugin: 'signing'
+apply plugin: 'idea'
+apply plugin: 'eclipse'
+apply plugin: 'org.asciidoctor.gradle.asciidoctor'
+
+sourceCompatibility = 1.6
+targetCompatibility = 1.6
+
+buildscript {
+    repositories {
+        jcenter()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath 'org.asciidoctor:asciidoctor-gradle-plugin:1.5.1'
+    }
+
+    final javafxHome = System.env['JAVAFX_HOME']
+    if (javafxHome) {
+      project.ext.javafxJar = "${javafxHome}/rt/lib/jfxrt.jar"
+      if (!(new File(project.ext.javafxJar).exists())) {
+          // If JAVAFX_HOME/rt/lib/jfxrt.jar doesn't exist, maybe the user
+          // is pointing at the directory containing jfxrt.jar itself?
+          project.ext.javafxJar = "${javafxHome}/jfxrt.jar"
+      }
+    } else {
+      final javaHome = System.env['JAVA_HOME']
+      if (javaHome) {
+          File jfxrt7Jar = new File("${javaHome}/jre/lib/jfxrt.jar")
+          File jfxrt8Jar = new File("${javaHome}/jre/lib/ext/jfxrt.jar")
+          if (jfxrt8Jar.exists()) {
+               project.ext.javafxJar = jfxrt8Jar.canonicalPath
+          } else if (jfxrt7Jar.exists()) {
+               project.ext.javafxJar = jfxrt7Jar.canonicalPath
+          }
+      }
+    }
+    try {
+      println "JavaFX runtime jar: ${project.ext.javafxJar}"
+      dependencies {
+        classpath files(project.ext.javafxJar)
+      }
+    } catch (MissingPropertyException mpe) {
+        println """|
+        |    Please set the environment variable JAVAFX_HOME
+        |    to the directory that contains rt/lib/jfxrt.jar
+        |    of JavaFX version ${groovyfx_requiredJavaFxVersion}.\n""".stripMargin('|')
+        System.exit 1
+    }
+}
+
+project.ext.actualJavaFXVersion = com.sun.javafx.runtime.VersionInfo.runtimeVersion
+if (! project.ext.actualJavaFXVersion =~ groovyfx_requiredJavaFxVersion) {
+  println "    Required JavaFX version is '${groovyfx_requiredJavaFxVersion}' but actual version is '${project.ext.actualJavaFXVersion}'"
+  System.exit 1
+}
+
+repositories {
+    if (project.hasProperty('groovyfx_useMavenLocal') && Boolean.valueOf(project.groovyfx_useMavenLocal)) { mavenLocal() }
+    mavenCentral()
+}
+
+dependencies {
+    compile "org.codehaus.groovy:groovy-all:${groovyfx_groovyVersion}"
+    compile "org.ow2.asm:asm:${groovyfx_asmVersion}"
+    compile files(project.ext.javafxJar)
+    testCompile "junit:junit:${groovyfx_junitVersion}"
+    println "Groovy: ${groovyfx_groovyVersion}; ASM: ${groovyfx_asmVersion}; JUnit: ${groovyfx_junitVersion}"
+}
+
+jar.baseName = 'groovyfx'
+
+task wrap(type:Wrapper, description:"create a gradlew") {
+    gradleVersion = '2.2.1'
+}
+
+apply {
+    from 'buildSrc/scripts/demo.gradle'
+    from 'buildSrc/scripts/mavenCentralDeploy.gradle'
+}
+
+signArchives.onlyIf {
+    project.hasProperty('signing.keyId')
+}
+
+uploadArchives.onlyIf {
+    project.hasProperty('sonatypeUsername') && project.hasProperty('sonatypePassword')
+}
+
+idea {
+  module {
+    excludeDirs += file('gradle/') // Gradle directory including the wrapper subdirectory.
+    excludeDirs += file('.settings/') // Eclipse settings directory.
+    excludeDirs += file('bin') // Eclipse compilation directory.
+    excludeDirs += file('out') // IDEA compilation directory.
+    excludeDirs += file('build') // Gradle compilation directory.
+  }
+  project {
+    ipr {
+      withXml { provider ->
+        final node =provider.asNode()
+        final component = provider.asNode().component
+        node.component.find { it.'@name' == 'VcsDirectoryMappings' }.mapping[0].'@vcs' = 'Git'
+        final gradleSettings = node.appendNode('component' , [name: 'GradleSettings'])
+        gradleSettings.appendNode('option', [name: 'linkedProjectPath', value: '$PROJECT_DIR$/build.gradle'])
+      }
+    }
+  }
+}
+
+asciidoctor {
+  //sources { include 'index.adoc' }
+  attributes toc: 'left',
+             doctype: 'book',
+             icons: 'font',
+             encoding: 'utf-8',
+             sectlink: true,
+             sectanchors: true,
+             numbered: true,
+             linkattrs: true,
+             imagesdir: 'images',
+             stylesheet: 'css/style.css',
+             'source-highlighter': 'coderay',
+             'groovyfx-version': project.version
+}
